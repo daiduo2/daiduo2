@@ -1,0 +1,134 @@
+name: Sync Featured Projects
+
+on:
+  # 每天北京时间凌晨 2:17 同步一次
+  schedule:
+    - cron: '17 18 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/update-projects.yml'
+
+permissions:
+  contents: write
+
+# 防止与其它写 main 的 workflow 并发推送
+concurrency:
+  group: profile-readme-write
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    name: 同步精选项目卡片
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 渲染精选项目卡片
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const { owner } = context.repo;
+
+            // 精选项目清单：顺序即主页展示顺序，改这里就能换项目
+            const PINNED = [
+              'geoseg',
+              'solver-adapter',
+              'generate-hypothesis-mcp',
+              'local-proof-loop',
+              'academic-trend-monitor',
+              'academic-evolution-graph'
+            ];
+
+            const ICON_MAP = {
+              Python: 'python',
+              JavaScript: 'js',
+              TypeScript: 'ts',
+              Go: 'go',
+              Rust: 'rust',
+              Kotlin: 'kotlin',
+              HTML: 'html',
+              CSS: 'css'
+            };
+
+            const esc = (s) => String(s)
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;');
+
+            const cards = [];
+            for (const name of PINNED) {
+              const res = await github.rest.repos.get({ owner: owner, repo: name });
+              const d = res.data;
+
+              const desc = esc(d.description || (name + ' 项目'));
+              const lang = d.language || '';
+              const iconKey = ICON_MAP[lang] || lang.toLowerCase();
+              const icon = lang
+                ? '<img src="https://skillicons.dev/icons?i=' + iconKey + '" alt="' + esc(lang) + '" />'
+                : '';
+
+              const badges = [
+                '<img src="https://img.shields.io/github/stars/' + owner + '/' + name + '?style=flat-square&logo=github" alt="Stars" />',
+                '<img src="https://img.shields.io/github/forks/' + owner + '/' + name + '?style=flat-square&logo=github" alt="Forks" />'
+              ].join(' ');
+
+              const demo = d.homepage
+                ? '<div style="margin-top: 10px;"><a href="' + d.homepage + '" target="_blank" style="color: #58a6ff;">🔗 在线 Demo</a></div>'
+                : '';
+
+              cards.push(
+                '<td align="center" width="50%" style="padding: 15px; border: 1px solid #30363d; border-radius: 6px; margin: 5px; background-color: #0d1117;">' +
+                  '<h3><a href="https://github.com/' + owner + '/' + name + '" style="color: #58a6ff; text-decoration: none;">' + esc(name) + '</a></h3>' +
+                  '<p style="color: #8b949e; font-size: 14px; margin: 10px 0;">' + desc + '</p>' +
+                  '<div style="margin: 10px 0;">' + icon + '</div>' +
+                  '<div style="margin: 10px 0;">' + badges + '</div>' +
+                  demo +
+                '</td>'
+              );
+            }
+
+            const rows = [];
+            for (let i = 0; i < cards.length; i += 2) {
+              const left = cards[i] || '<td width="50%"></td>';
+              const right = cards[i + 1] || '<td width="50%"></td>';
+              rows.push('<tr>\n' + left + '\n' + right + '\n</tr>');
+            }
+            const table = '<table width="100%" style="table-layout: fixed;">\n' + rows.join('\n') + '\n</table>';
+
+            const BEGIN = '<!-- AUTO:PROJECTS:BEGIN -->';
+            const END = '<!-- AUTO:PROJECTS:END -->';
+
+            const readme = fs.readFileSync('README.md', 'utf8');
+            const b = readme.indexOf(BEGIN);
+            const e = readme.indexOf(END);
+            if (b === -1 || e === -1 || e < b) {
+              console.error('找不到自动生成区块标记，检查 README.md 是否保留了 ' + BEGIN + ' 与 ' + END);
+              process.exit(1);
+            }
+
+            const block = BEGIN +
+              '\n<!-- 本区块由 GitHub Actions 自动生成，请勿手动编辑 -->\n' +
+              table +
+              '\n' + END;
+
+            fs.writeFileSync('README.md', readme.slice(0, b) + block + readme.slice(e + END.length));
+            console.log('已同步 ' + PINNED.length + ' 个精选项目');
+
+      - name: 提交变更
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --staged --quiet; then
+            echo "无变化，跳过提交"
+          else
+            git commit -m "chore: 同步精选项目卡片"
+            git push
+          fi
