@@ -21,13 +21,13 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    name: 同步精选项目卡片
+    name: 同步精选项目区块
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 渲染精选项目卡片
+      - name: 渲染精选项目区块
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -45,16 +45,15 @@ jobs:
               'academic-evolution-graph'
             ];
 
-            const ICON_MAP = {
-              Python: 'python',
-              JavaScript: 'js',
-              TypeScript: 'ts',
-              Go: 'go',
-              Rust: 'rust',
-              Kotlin: 'kotlin',
-              HTML: 'html',
-              CSS: 'css'
-            };
+            // 技术标签的排序优先级：仓库 topics 是字母序，
+            // 直接用会把最有辨识度的词排到后面，所以按这份优先级取前三个。
+            const TAG_ORDER = [
+              'specfem2d', 'geophysics', 'solver', 'seismic', 'knowledge-graph',
+              'arxiv', 'openalex', 'bertopic', 'mcp', 'research', 'llm', 'lean',
+              'ai4math', 'formal-verification', 'theorem-proving', 'agent',
+              'multi-agent', 'dashboard', 'visualization', 'python', 'javascript',
+              'typescript', 'go'
+            ];
 
             const esc = (s) => String(s)
               .replace(/&/g, '&amp;')
@@ -62,45 +61,42 @@ jobs:
               .replace(/>/g, '&gt;')
               .replace(/"/g, '&quot;');
 
-            const cards = [];
+            const blocks = [];
             for (const name of PINNED) {
               const res = await github.rest.repos.get({ owner: owner, repo: name });
               const d = res.data;
 
-              const desc = esc(d.description || (name + ' 项目'));
+              const desc = esc(d.description || '');
               const lang = d.language || '';
-              const iconKey = ICON_MAP[lang] || lang.toLowerCase();
-              const icon = lang
-                ? '<img src="https://skillicons.dev/icons?i=' + iconKey + '" alt="' + esc(lang) + '" />'
-                : '';
+              const topics = (d.topics || []).map(t => String(t).toLowerCase());
 
-              const badges = [
-                '<img src="https://img.shields.io/github/stars/' + owner + '/' + name + '?style=flat-square&logo=github" alt="Stars" />',
-                '<img src="https://img.shields.io/github/forks/' + owner + '/' + name + '?style=flat-square&logo=github" alt="Forks" />'
-              ].join(' ');
+              const tags = [];
+              if (lang) tags.push(lang);
+              for (const t of TAG_ORDER) {
+                if (tags.length >= 4) break;
+                if (topics.includes(t) && !tags.some(x => x.toLowerCase() === t)) {
+                  tags.push(t);
+                }
+              }
+              const tagLine = tags.map(t => '`' + t + '`').join(' · ');
 
-              const demo = d.homepage
-                ? '<div style="margin-top: 10px;"><a href="' + d.homepage + '" target="_blank" style="color: #58a6ff;">🔗 在线 Demo</a></div>'
-                : '';
-
-              cards.push(
-                '<td align="center" width="50%" style="padding: 15px; border: 1px solid #30363d; border-radius: 6px; margin: 5px; background-color: #0d1117;">' +
-                  '<h3><a href="https://github.com/' + owner + '/' + name + '" style="color: #58a6ff; text-decoration: none;">' + esc(name) + '</a></h3>' +
-                  '<p style="color: #8b949e; font-size: 14px; margin: 10px 0;">' + desc + '</p>' +
-                  '<div style="margin: 10px 0;">' + icon + '</div>' +
-                  '<div style="margin: 10px 0;">' + badges + '</div>' +
-                  demo +
-                '</td>'
-              );
+              const lines = [];
+              lines.push('### [' + esc(name) + '](https://github.com/' + owner + '/' + name + ')');
+              lines.push('');
+              if (desc) {
+                lines.push(desc);
+                lines.push('');
+              }
+              if (tagLine) {
+                lines.push(tagLine);
+                lines.push('');
+              }
+              if (d.homepage) {
+                lines.push('[在线演示](' + d.homepage + ')');
+                lines.push('');
+              }
+              blocks.push(lines.join('\n'));
             }
-
-            const rows = [];
-            for (let i = 0; i < cards.length; i += 2) {
-              const left = cards[i] || '<td width="50%"></td>';
-              const right = cards[i + 1] || '<td width="50%"></td>';
-              rows.push('<tr>\n' + left + '\n' + right + '\n</tr>');
-            }
-            const table = '<table width="100%" style="table-layout: fixed;">\n' + rows.join('\n') + '\n</table>';
 
             const BEGIN = '<!-- AUTO:PROJECTS:BEGIN -->';
             const END = '<!-- AUTO:PROJECTS:END -->';
@@ -114,8 +110,8 @@ jobs:
             }
 
             const block = BEGIN +
-              '\n<!-- 本区块由 GitHub Actions 自动生成，请勿手动编辑 -->\n' +
-              table +
+              '\n<!-- 本区块由 GitHub Actions 自动生成，请勿手动编辑 -->\n\n' +
+              blocks.join('\n') +
               '\n' + END;
 
             fs.writeFileSync('README.md', readme.slice(0, b) + block + readme.slice(e + END.length));
@@ -129,6 +125,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "无变化，跳过提交"
           else
-            git commit -m "chore: 同步精选项目卡片"
+            git commit -m "chore: 同步精选项目区块"
             git push
           fi
